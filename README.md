@@ -58,15 +58,18 @@ To compile the source code, you are required to first clone the original nexmon 
 that contains our C-based patching framework for Wi-Fi firmwares. Than you clone this 
 repository as one of the sub-projects in the corresponding patches sub-directory. This 
 allows you to build and compile all the firmware patches required to repeat our experiments.
-The following steps will get you started on Xubuntu 16.04 LTS:
+The following steps will get you started on Xubuntu 16.04 LTS (or CentOS):
 
-1. Install some dependencies: `sudo apt-get install git gawk qpdf adb`
+1. Install some dependencies: `sudo apt-get install git gawk qpdf adb` (CentOS the same on `yum`)
 2. **Only necessary for x86_64 systems**, install i386 libs: 
 
   ```
+  # for Xubuntu 16.04 LTS
   sudo dpkg --add-architecture i386
   sudo apt-get update
   sudo apt-get install libc6:i386 libncurses5:i386 libstdc++6:i386
+  # for CentOS
+  sudo yum install flex flex-devel.x86_64 bison glibc-2.17-196.el7.i686 ncurses-libs-5.9-13.20130511.el7.i686 libstdc++-4.8.5-16.el7.i686 
   ```
 3. Clone the nexmon base repository: `git clone https://github.com/seemoo-lab/nexmon.git`.
 4. Download and extract Android NDK r11c (use exactly this version!).
