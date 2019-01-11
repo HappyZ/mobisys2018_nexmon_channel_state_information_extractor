@@ -62,6 +62,17 @@
 extern void prepend_ethernet_ipv4_udp_header(struct sk_buff *p);
 
 #define WL_RSSI_ANT_MAX     4   /* max possible rx antennas */
+#define SHM_CSI_COLLECT         0x8b0
+#define SHM_CSI_COPIED          0x8b1
+#define CMP_FRM_CTRL_FLD        0x8b2
+#define CMP_DURATION            0x8b3
+#define CMP_DST_MAC_0           0x8b4
+#define CMP_DST_MAC_1           0x8b5
+#define CMP_DST_MAC_2           0x8b6
+#define CMP_DST_MAC_SAVE_0      0x8b7
+#define CMP_DST_MAC_SAVE_1      0x8b8
+#define CMP_DST_MAC_SAVE_2      0x8b9
+#define COUNTER                 0x8ba
 
 // header of csi frame coming from ucode
 struct d11csihdr {
@@ -112,7 +123,7 @@ struct csi_value_i16 {
 
 struct csi_udp_frame {
     struct ethernet_ip_udp_header hdrs;
-    uint32 kk1;
+    uint16 kk1[2];
     uint8 SrcMac[6];
     uint32 kk2;
     struct csi_value_i16 csi_values[];
@@ -122,24 +133,37 @@ uint16 missing_csi_frames = 0;
 uint16 inserted_csi_values = 0;
 struct sk_buff *p_csi = 0;
 
+uint16 csi_collect = 0;
+uint16 cmp_frm_ctrl_fld = 0;
+uint16 cmp_dst_mac_0 = 0;
+uint16 cmp_dst_mac_1 = 0;
+uint16 cmp_dst_mac_2 = 0;
+
 struct int14 {signed int val:14;} __attribute__((packed));
 
 void
 create_new_csi_frame(struct wl_info *wl, struct sk_buff *p, struct wlc_d11rxhdr *wlc_rxhdr)
 {
+    printf("create_new_csi_frame\n");
     struct osl_info *osh = wl->wlc->osh;
 
     missing_csi_frames = wlc_rxhdr->rxhdr.NexmonExt;
 
     // create new csi frame
     p_csi = pkt_buf_get_skb(osh, sizeof(struct csi_udp_frame) + missing_csi_frames * (RX_HDR_LEN * 2));
+    printf("p_csi = %X, missing_frame = %d\n", p_csi, missing_csi_frames);
     inserted_csi_values = 0;
 
     struct csi_udp_frame *udpfrm = (struct csi_udp_frame *) p_csi->data;
     struct nexmon_d11rxhdr *ucodefrm = (struct nexmon_d11rxhdr *) p->data;
 
-    udpfrm->kk1 = 0x11111111;
-    udpfrm->kk2 = wlc_recv_compute_rspec(&wlc_rxhdr->rxhdr, p->data);
+    //printf("wlc_rxhdr->rxpwr = %d, %d\n", wlc_rxhdr->rxpwr[0], wlc_rxhdr->rxpwr[1]);
+    //printf("wlc_rxhdr->rssi_qdb = %d\n", wlc_rxhdr->rssi_qdb);
+    // udpfrm->kk1 = 0x11111111;
+    udpfrm->kk1[0] = 0xcccc;
+    udpfrm->kk1[1] = wlc_rxhdr->rxhdr.RxChan;
+    // udpfrm->kk2 = wlc_recv_compute_rspec(&wlc_rxhdr->rxhdr, p->data);
+    udpfrm->kk2 = 0xcccccccc;
     // copy mac address to new udp frame
     memcpy(udpfrm->SrcMac, ucodefrm->SrcMac, sizeof(udpfrm->SrcMac));
 }
@@ -149,25 +173,46 @@ process_frame_hook(struct sk_buff *p, struct wlc_d11rxhdr *wlc_rxhdr, struct wlc
 {
     struct osl_info *osh = wlc_hw->wlc->osh;
     struct wl_info *wl = wlc_hw->wlc->wl;
+    struct wlc_hw_info *hw = wlc_hw->wlc->hw;
 
-    if (p_csi == 0) {
-        if (wlc_rxhdr->rxhdr.RxFrameSize == 2) {
+    // printf("new frame!\n");
+    csi_collect = wlc_bmac_read_shm(hw, SHM_CSI_COLLECT * 2);
+    // printf("csi_collect: %d\n", csi_collect);
+    if (csi_collect == 1 && (cmp_frm_ctrl_fld | cmp_dst_mac_0 | cmp_dst_mac_1 | cmp_dst_mac_2) == 0) {
+        printf("Saving condition\n");
+        cmp_frm_ctrl_fld = wlc_bmac_read_shm(hw, CMP_FRM_CTRL_FLD * 2);
+        cmp_dst_mac_0 = wlc_bmac_read_shm(hw, CMP_DST_MAC_0 * 2);
+        cmp_dst_mac_1 = wlc_bmac_read_shm(hw, CMP_DST_MAC_1 * 2);
+        cmp_dst_mac_2 = wlc_bmac_read_shm(hw, CMP_DST_MAC_2 * 2);
+        printf("Saved condition: %04X %04x %04X %04x\n", cmp_frm_ctrl_fld, cmp_dst_mac_0, cmp_dst_mac_1, cmp_dst_mac_2);
+    } else if (csi_collect == 0 && (cmp_frm_ctrl_fld | cmp_dst_mac_0 | cmp_dst_mac_1 | cmp_dst_mac_2) != 0) {
+        printf("Restoring condition\n");
+        wlc_bmac_write_shm(hw, SHM_CSI_COLLECT * 2, 1);
+        wlc_bmac_write_shm(hw, CMP_FRM_CTRL_FLD * 2, cmp_frm_ctrl_fld);
+        wlc_bmac_write_shm(hw, CMP_DST_MAC_0 * 2, cmp_dst_mac_0);
+        wlc_bmac_write_shm(hw, CMP_DST_MAC_1 * 2, cmp_dst_mac_1);
+        wlc_bmac_write_shm(hw, CMP_DST_MAC_2 * 2, cmp_dst_mac_2);
+        printf("Restored condition: %04X %04x %04X %04x\n",
+            wlc_bmac_read_shm(hw, CMP_FRM_CTRL_FLD * 2),
+            wlc_bmac_read_shm(hw, CMP_DST_MAC_0 * 2),
+            wlc_bmac_read_shm(hw, CMP_DST_MAC_1 * 2),
+            wlc_bmac_read_shm(hw, CMP_DST_MAC_2 * 2));
+    }
+    // printf("framesize: %d, counter = 0x%04X\n", wlc_rxhdr->rxhdr.RxFrameSize, wlc_bmac_read_shm(hw, COUNTER * 2));
 
-            printf("csi out of order\n");
-            
-            pkt_buf_free_skb(osh, p, 0); // drop incoming csi frame
-
-            return; // drop all csi frames, if no csi information required
-
-        } else if (wlc_rxhdr->rxhdr.NexmonExt > 0) {
-            create_new_csi_frame(wl, p, wlc_rxhdr);
-        }
-    } else {
-        struct csi_udp_frame *udpfrm = (struct csi_udp_frame *) p_csi->data;
-
-        if (wlc_rxhdr->rxhdr.RxFrameSize == 2) {
+    // printf("framesize %d, p_csi %d, nexmonext %d\n", wlc_rxhdr->rxhdr.RxFrameSize, (p_csi == 0) ? 0 : 1, wlc_rxhdr->rxhdr.NexmonExt);
+    if (wlc_rxhdr->rxhdr.RxFrameSize == 2) {
+        if (p_csi == 0) {
+            printf("csi frame before initializing p_csi, out of order\n");
+            pkt_buf_free_skb(osh, p, 0);
+            // printf("cleaning p done\n");
+            // p = 0;
+        } else {
+            struct csi_udp_frame *udpfrm = (struct csi_udp_frame *) p_csi->data;
             struct d11csihdr *ucodecsifrm = (struct d11csihdr *) p->data;
             
+            // printf("starting csi frame, %d left\n", missing_csi_frames);
+
             missing_csi_frames--;
 
             struct int14 sint14;
@@ -180,39 +225,51 @@ process_frame_hook(struct sk_buff *p, struct wlc_d11rxhdr *wlc_rxhdr, struct wlc
 
                 inserted_csi_values++;
             }
-
             if (missing_csi_frames == 0) {
-
                 // as prepend_ethernet_ipv4_udp_header pushes, we need to pull first
                 p_csi->len = sizeof(struct csi_udp_frame) + inserted_csi_values * sizeof(struct csi_value_i16);
-
+                // printf("skb_pull\n");
                 skb_pull(p_csi, sizeof(struct ethernet_ip_udp_header));
+                // printf("prepend_ethernet_ipv4_udp_header\n");
                 prepend_ethernet_ipv4_udp_header(p_csi);
 
+                printf("xmit\n");
                 wl->dev->chained->funcs->xmit(wl->dev, wl->dev->chained, p_csi);
-
+                printf("sent\n");
                 p_csi = 0;
+                //pkt_buf_free_skb(osh, p_csi, 0);
+                //printf("cleaning p_csi done\n");
+                //p_csi = 0;
             }
-
+            // p = 0;
             pkt_buf_free_skb(osh, p, 0); // drop incoming csi frame
-
-            return;
-
-        } else {
-            printf("csi missing, size: %d\n", wlc_rxhdr->rxhdr.RxFrameSize);
-
-            pkt_buf_free_skb(osh, p_csi, 0);
-            if (wlc_rxhdr->rxhdr.NexmonExt > 0) {
-                create_new_csi_frame(wl, p, wlc_rxhdr);
-            }
+            // printf("cleaning p done\n");
         }
+        return;
+    } else if (wlc_rxhdr->rxhdr.NexmonExt > 0) {
+        if (p_csi != 0) {
+            printf("missing csi %d frames\n", missing_csi_frames);
+            printf("re-initializing p_csi\n");
+        } else {
+            printf("initializing p_csi\n");
+        }
+        printf("framesize = %d, counter = 0x%04X\n", wlc_rxhdr->rxhdr.RxFrameSize, wlc_bmac_read_shm(hw, COUNTER * 2));
+        printf("dst mac saved = 0x%04X %04X %04X\n",
+            wlc_bmac_read_shm(hw, CMP_DST_MAC_SAVE_0 * 2),
+            wlc_bmac_read_shm(hw, CMP_DST_MAC_SAVE_1 * 2),
+            wlc_bmac_read_shm(hw, CMP_DST_MAC_SAVE_2 * 2));
+        create_new_csi_frame(wl, p, wlc_rxhdr);
+    } else if (p_csi != 0) {
+        printf("missing csi, re-initializing p_csi\n");
+        pkt_buf_free_skb(osh, p_csi, 0);
+        //p_csi = 0;
     }
-
     // only continue processing this frame, if it is not a csi frame
+    // printf("start non-csi frame\n");
     wlc_rxhdr->tsf_l = tsf_l;
     wlc_phy_rssi_compute(wlc_hw->band->pi, wlc_rxhdr);
-
     wlc_recv(wlc_hw->wlc, p);
+    printf("finished non-csi frame\n");
 }
 
 // hook to allow handling the wlc_d11rxhdr on our own to avoid overwriting of additional information in d11rxhdr passed from the ucode

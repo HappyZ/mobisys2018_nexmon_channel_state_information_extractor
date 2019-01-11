@@ -1,6 +1,9 @@
---- ../gen/ucode.asm	2018-03-12 23:32:43.152016700 +0100
-+++ ucode.asm	2018-03-12 23:32:50.777878856 +0100
-@@ -3,0 +4,37 @@
+--- ../gen/ucode.asm	2019-01-11 16:48:33.000000000 -0600
++++ ucode.asm	2019-01-11 11:55:00.000000000 -0600
+@@ -1,6 +1,44 @@
+ #include "/mnt/Lucifer/yanzi/Android/nexmon/buildtools/b43/debug/include/spr.inc"
+ #include "/mnt/Lucifer/yanzi/Android/nexmon/buildtools/b43/debug/include/shm.inc"
+ #include "/mnt/Lucifer/yanzi/Android/nexmon/buildtools/b43/debug/include/cond.inc"
 +#include "../include/macros.inc"
 +#define phy_reg_read_to_shm(addr,target) \
 + mov addr, r33 \
@@ -35,39 +38,54 @@
 +#define CMP_DST_MAC_0 0x8b4
 +#define CMP_DST_MAC_1 0x8b5
 +#define CMP_DST_MAC_2 0x8b6
-+#define CMP_SRC_MAC_0 0x8b7
-+#define CMP_SRC_MAC_1 0x8b8
-+#define CMP_SRC_MAC_2 0x8b9
-@@ -2708,0 +2746 @@
++#define CMP_DST_MAC_SAVE_0 0x8b7
++#define CMP_DST_MAC_SAVE_1 0x8b8
++#define CMP_DST_MAC_SAVE_2 0x8b9
++#define COUNTER 0x8ba
+ %arch 15
+ %start entry
+ entry:
+@@ -2706,6 +2744,8 @@
+  add [0x0AC], 0x1, [0x0AC]
+  jmp L3
+ L478:
++ // csi copied initialization
 + mov 0, [SHM_CSI_COPIED]
-@@ -2853,0 +2892,222 @@
+  jnzx 0, 2, SPR_RXE_FIFOCTL1, 0x0, L0
+  mov 0x1F1, r33
+  calls L52
+@@ -2851,6 +2891,166 @@
+  calls L990
+  jzx 0, 0, SPR_MHP_Status, 0x0, L503
+ L504:
 +#define SPIN_LENGTH (6 + 16)
 +#define SPARE1 r54
++ mov 0, r55
 +spin_rx_header:
-+ jext COND_RX_COMPLETE, spin_rx_end
++ jext COND_RX_COMPLETE, skip+
 + jl SPR_RXE_FRAMELEN, SPIN_LENGTH, spin_rx_header
 +spin_rx_end:
 + jl SPR_RXE_FRAMELEN, SPIN_LENGTH, skip+
-+ mov 0, r55
-+ mov [CMP_FRM_CTRL_FLD], SPARE1
-+ jne [3,off1], SPARE1, skip+
-+ mov [CMP_DURATION], SPARE1
-+ jne [4,off1], SPARE1, skip+
++ and [CMP_FRM_CTRL_FLD], 0xfc, SPARE1
++ and [3,off1], 0xfc, r56
++ jne SPARE1, r56, skip+
 + mov [CMP_DST_MAC_0], SPARE1
 + jne [5,off1], SPARE1, skip+
 + mov [CMP_DST_MAC_1], SPARE1
 + jne [6,off1], SPARE1, skip+
 + mov [CMP_DST_MAC_2], SPARE1
 + jne [7,off1], SPARE1, skip+
-+ mov [CMP_SRC_MAC_0], SPARE1
-+ jne [8,off1], SPARE1, skip+
-+ mov [CMP_SRC_MAC_1], SPARE1
-+ jne [9,off1], SPARE1, skip+
-+ mov [CMP_SRC_MAC_2], SPARE1
-+ jne [10,off1], SPARE1, skip+
++ add [COUNTER], 1, [COUNTER]
++ and [COUNTER], 0x3, [COUNTER]
++ jne [COUNTER], 0, skip+
 + mov 1, r55
++ or [5,off1], 0x0, [CMP_DST_MAC_SAVE_0]
++ or [6,off1], 0x0, [CMP_DST_MAC_SAVE_1]
++ or [7,off1], 0x0, [CMP_DST_MAC_SAVE_2]
 + jext COND_RX_COMPLETE, skip+
 + jne [SHM_CSI_COLLECT], 1, skip+
++ // check the encoding
++ // register 23 contains the frame encoding
 + and SPR_RXE_PHYRXSTAT0, 0x3, SPARE1
 + jne r23, 0x0, localskip+
 + add [0x8bd], 1, [0x8bd]
@@ -78,10 +96,13 @@
 + jne r23, 0x2, localskip+
 + add [0x8bf], 1, [0x8bf]
 +localskip:
++ // store source mac address in frames d11rxhdr
 + or [8,off1], 0x0, [RX_HDR_NEXMON_SrcMac0]
 + or [9,off1], 0x0, [RX_HDR_NEXMON_SrcMac1]
 + or [10,off1], 0x0, [RX_HDR_NEXMON_SrcMac2]
++ // skip csi collection for 802.11b frames
 + je r23, 0x0, skip+
++ // clear rx header
 + mov RX_HDR_BASE + RX_HDR_LEN, SPARE1
 + mov RX_HDR_BASE + (17 * RX_HDR_LEN), SPR_BASE5
 +erase_hdr:
@@ -91,6 +112,7 @@
 + phy_reg_write(0x00d,73)
 + mov 0, SPARE1
 + mov (RX_HDR_BASE + RX_HDR_LEN), SPR_BASE5
++ // copy CSI information for 1st 15 subcarriers
 + or 2, 0x0, [0, off5]
 + or 15, 0x0, [1, off5]
 + add SPR_BASE5, 2, SPR_BASE5
@@ -101,6 +123,7 @@
 + add SPR_BASE5, 2, SPR_BASE5
 + add SPARE1, 1, SPARE1
 + jl SPARE1, 15, repeat-
++ // copy CSI information for 2nd 15 subcarriers
 + or 2, 0x0, [0, off5]
 + or 15, 0x0, [1, off5]
 + add SPR_BASE5, 2, SPR_BASE5
@@ -111,6 +134,7 @@
 + add SPR_BASE5, 2, SPR_BASE5
 + add SPARE1, 1, SPARE1
 + jl SPARE1, 30, repeat-
++ // copy CSI information for 3rd 15 subcarriers
 + or 2, 0x0, [0, off5]
 + or 15, 0x0, [1, off5]
 + add SPR_BASE5, 2, SPR_BASE5
@@ -121,6 +145,7 @@
 + add SPR_BASE5, 2, SPR_BASE5
 + add SPARE1, 1, SPARE1
 + jl SPARE1, 45, repeat-
++ // copy CSI information for 4th 15 subcarriers
 + or 2, 0x0, [0, off5]
 + or 15, 0x0, [1, off5]
 + add SPR_BASE5, 2, SPR_BASE5
@@ -131,6 +156,7 @@
 + add SPR_BASE5, 2, SPR_BASE5
 + add SPARE1, 1, SPARE1
 + jl SPARE1, 60, repeat-
++ // copy CSI information for 5th 15 subcarriers
 + or 2, 0x0, [0, off5]
 + or 15, 0x0, [1, off5]
 + add SPR_BASE5, 2, SPR_BASE5
@@ -141,178 +167,165 @@
 + add SPR_BASE5, 2, SPR_BASE5
 + add SPARE1, 1, SPARE1
 + jl SPARE1, 75, repeat-
++ // copy CSI information for 6th 15 subcarriers
 + or 2, 0x0, [0, off5]
 + or 15, 0x0, [1, off5]
-+ add SPR_BASE5, 2, SPR_BASE5
-+repeat:
-+ phy_reg_write(0x00e, SPARE1)
-+ phy_reg_read_to_shm_off(0x00f, 0, off5)
-+ phy_reg_read_to_shm_off(0x010, 1, off5)
-+ add SPR_BASE5, 2, SPR_BASE5
-+ add SPARE1, 1, SPARE1
-+ jl SPARE1, 90, repeat-
++ add SPR_BASE5, 2*16, SPR_BASE5
++ // copy CSI information for 7th 15 subcarriers
 + or 2, 0x0, [0, off5]
 + or 15, 0x0, [1, off5]
-+ add SPR_BASE5, 2, SPR_BASE5
-+repeat:
-+ phy_reg_write(0x00e, SPARE1)
-+ phy_reg_read_to_shm_off(0x00f, 0, off5)
-+ phy_reg_read_to_shm_off(0x010, 1, off5)
-+ add SPR_BASE5, 2, SPR_BASE5
-+ add SPARE1, 1, SPARE1
-+ jl SPARE1, 105, repeat-
++ add SPR_BASE5, 2*16, SPR_BASE5
++ // copy CSI information for 8th 15 subcarriers
 + or 2, 0x0, [0, off5]
 + or 15, 0x0, [1, off5]
-+ add SPR_BASE5, 2, SPR_BASE5
-+repeat:
-+ phy_reg_write(0x00e, SPARE1)
-+ phy_reg_read_to_shm_off(0x00f, 0, off5)
-+ phy_reg_read_to_shm_off(0x010, 1, off5)
-+ add SPR_BASE5, 2, SPR_BASE5
-+ add SPARE1, 1, SPARE1
-+ jl SPARE1, 120, repeat-
++ add SPR_BASE5, 2*16, SPR_BASE5
++ // copy CSI information for 9th 15 subcarriers
 + or 2, 0x0, [0, off5]
 + or 15, 0x0, [1, off5]
-+ add SPR_BASE5, 2, SPR_BASE5
-+repeat:
-+ phy_reg_write(0x00e, SPARE1)
-+ phy_reg_read_to_shm_off(0x00f, 0, off5)
-+ phy_reg_read_to_shm_off(0x010, 1, off5)
-+ add SPR_BASE5, 2, SPR_BASE5
-+ add SPARE1, 1, SPARE1
-+ jl SPARE1, 135, repeat-
++ add SPR_BASE5, 2*16, SPR_BASE5
++ // copy CSI information for 10th 15 subcarriers
 + or 2, 0x0, [0, off5]
 + or 15, 0x0, [1, off5]
-+ add SPR_BASE5, 2, SPR_BASE5
-+repeat:
-+ phy_reg_write(0x00e, SPARE1)
-+ phy_reg_read_to_shm_off(0x00f, 0, off5)
-+ phy_reg_read_to_shm_off(0x010, 1, off5)
-+ add SPR_BASE5, 2, SPR_BASE5
-+ add SPARE1, 1, SPARE1
-+ jl SPARE1, 150, repeat-
++ add SPR_BASE5, 2*16, SPR_BASE5
++ // copy CSI information for 11th 15 subcarriers
 + or 2, 0x0, [0, off5]
 + or 15, 0x0, [1, off5]
-+ add SPR_BASE5, 2, SPR_BASE5
-+repeat:
-+ phy_reg_write(0x00e, SPARE1)
-+ phy_reg_read_to_shm_off(0x00f, 0, off5)
-+ phy_reg_read_to_shm_off(0x010, 1, off5)
-+ add SPR_BASE5, 2, SPR_BASE5
-+ add SPARE1, 1, SPARE1
-+ jl SPARE1, 165, repeat-
++ add SPR_BASE5, 2*16, SPR_BASE5
++ // copy CSI information for 12th 15 subcarriers
 + or 2, 0x0, [0, off5]
 + or 15, 0x0, [1, off5]
-+ add SPR_BASE5, 2, SPR_BASE5
-+repeat:
-+ phy_reg_write(0x00e, SPARE1)
-+ phy_reg_read_to_shm_off(0x00f, 0, off5)
-+ phy_reg_read_to_shm_off(0x010, 1, off5)
-+ add SPR_BASE5, 2, SPR_BASE5
-+ add SPARE1, 1, SPARE1
-+ jl SPARE1, 180, repeat-
++ add SPR_BASE5, 2*16, SPR_BASE5
++ // copy CSI information for 13th 15 subcarriers
 + or 2, 0x0, [0, off5]
 + or 15, 0x0, [1, off5]
-+ add SPR_BASE5, 2, SPR_BASE5
-+repeat:
-+ phy_reg_write(0x00e, SPARE1)
-+ phy_reg_read_to_shm_off(0x00f, 0, off5)
-+ phy_reg_read_to_shm_off(0x010, 1, off5)
-+ add SPR_BASE5, 2, SPR_BASE5
-+ add SPARE1, 1, SPARE1
-+ jl SPARE1, 195, repeat-
++ add SPR_BASE5, 2*16, SPR_BASE5
++ // copy CSI information for 14th 15 subcarriers
 + or 2, 0x0, [0, off5]
 + or 15, 0x0, [1, off5]
-+ add SPR_BASE5, 2, SPR_BASE5
-+repeat:
-+ phy_reg_write(0x00e, SPARE1)
-+ phy_reg_read_to_shm_off(0x00f, 0, off5)
-+ phy_reg_read_to_shm_off(0x010, 1, off5)
-+ add SPR_BASE5, 2, SPR_BASE5
-+ add SPARE1, 1, SPARE1
-+ jl SPARE1, 210, repeat-
++ add SPR_BASE5, 2*16, SPR_BASE5
++ // copy CSI information for 15th 15 subcarriers
 + or 2, 0x0, [0, off5]
 + or 15, 0x0, [1, off5]
-+ add SPR_BASE5, 2, SPR_BASE5
-+repeat:
-+ phy_reg_write(0x00e, SPARE1)
-+ phy_reg_read_to_shm_off(0x00f, 0, off5)
-+ phy_reg_read_to_shm_off(0x010, 1, off5)
-+ add SPR_BASE5, 2, SPR_BASE5
-+ add SPARE1, 1, SPARE1
-+ jl SPARE1, 225, repeat-
++ add SPR_BASE5, 2*16, SPR_BASE5
++ // copy CSI information for 16th 15 subcarriers
 + or 2, 0x0, [0, off5]
 + or 15, 0x0, [1, off5]
-+ add SPR_BASE5, 2, SPR_BASE5
-+repeat:
-+ phy_reg_write(0x00e, SPARE1)
-+ phy_reg_read_to_shm_off(0x00f, 0, off5)
-+ phy_reg_read_to_shm_off(0x010, 1, off5)
-+ add SPR_BASE5, 2, SPR_BASE5
-+ add SPARE1, 1, SPARE1
-+ jl SPARE1, 240, repeat-
++ add SPR_BASE5, 2*16, SPR_BASE5
++ // copy CSI information for 17th 15 subcarriers
 + or 2, 0x0, [0, off5]
 + or 15, 0x0, [1, off5]
-+ add SPR_BASE5, 2, SPR_BASE5
-+repeat:
-+ phy_reg_write(0x00e, SPARE1)
-+ phy_reg_read_to_shm_off(0x00f, 0, off5)
-+ phy_reg_read_to_shm_off(0x010, 1, off5)
-+ add SPR_BASE5, 2, SPR_BASE5
-+ add SPARE1, 1, SPARE1
-+ jl SPARE1, 255, repeat-
++ add SPR_BASE5, 2*16, SPR_BASE5
++ // indicate the end of CSI being copied
 + mov 1, [SHM_CSI_COPIED]
 +skip:
-@@ -3491,0 +3752 @@
+  srx 5, 1, SPR_MHP_Status, 0x0, SPR_WEP_IV_Key
+  add SPR_WEP_IV_Key, 0x6, SPR_WEP_IV_Key
+  mov 0x0, [RX_HDR_RxStatus1]
+@@ -3489,7 +3689,11 @@
+  mov 0x7, SPR_TXBA_Control
+ L624:
+  jnzx 0, 7, SPR_MAC_CTLHI, 0x0, L625
 + je r55, 1, skip+
-@@ -3492,0 +3754,3 @@
+  jnzx 0, 0, r20, 0x0, L720
 + jne [SHM_CSI_COLLECT], 1, skip+
 + jmp L720
 +skip:
-@@ -3530,0 +3795,40 @@
+ L625:
+  orx 0, 2, 0x1, [RX_HDR_RxStatus2], [RX_HDR_RxStatus2]
+  srx 0, 6, r20, 0x0, r33
+@@ -3528,7 +3732,83 @@
+ L630:
+  jg r33, [0x010], L634
+  or r33, 0x0, [RX_HDR_RxFrameSize]
 + mov RX_HDR_BASE, SPR_RXE_RXHDR_OFFSET
 + or 0, 0x0, [SHM(0x1182)]
 + jne [SHM_CSI_COPIED], 1, skip+
 + or 17, 0x0, [SHM(0x1182)]
 +skip:
++ // send out original packet
 + calls L798
++ // skip if csi not copied
 + jne [SHM_CSI_COPIED], 1, skip+
++ // send csi packet
 + mov RX_HDR_BASE + RX_HDR_LEN, SPR_RXE_RXHDR_OFFSET
 + calls L798
++ // skip if csi not copied
++ jne [SHM_CSI_COPIED], 1, skip+
 + mov RX_HDR_BASE + (2 * RX_HDR_LEN), SPR_RXE_RXHDR_OFFSET
 + calls L798
++ // skip if csi not copied
++ jne [SHM_CSI_COPIED], 1, skip+
 + mov RX_HDR_BASE + (3 * RX_HDR_LEN), SPR_RXE_RXHDR_OFFSET
 + calls L798
++ // skip if csi not copied
++ jne [SHM_CSI_COPIED], 1, skip+
 + mov RX_HDR_BASE + (4 * RX_HDR_LEN), SPR_RXE_RXHDR_OFFSET
 + calls L798
++ // skip if csi not copied
++ jne [SHM_CSI_COPIED], 1, skip+
 + mov RX_HDR_BASE + (5 * RX_HDR_LEN), SPR_RXE_RXHDR_OFFSET
 + calls L798
++ // skip if csi not copied
++ jne [SHM_CSI_COPIED], 1, skip+
 + mov RX_HDR_BASE + (6 * RX_HDR_LEN), SPR_RXE_RXHDR_OFFSET
 + calls L798
++ // skip if csi not copied
++ jne [SHM_CSI_COPIED], 1, skip+
 + mov RX_HDR_BASE + (7 * RX_HDR_LEN), SPR_RXE_RXHDR_OFFSET
 + calls L798
++ // skip if csi not copied
++ jne [SHM_CSI_COPIED], 1, skip+
 + mov RX_HDR_BASE + (8 * RX_HDR_LEN), SPR_RXE_RXHDR_OFFSET
 + calls L798
++ // skip if csi not copied
++ jne [SHM_CSI_COPIED], 1, skip+
 + mov RX_HDR_BASE + (9 * RX_HDR_LEN), SPR_RXE_RXHDR_OFFSET
 + calls L798
++ // skip if csi not copied
++ jne [SHM_CSI_COPIED], 1, skip+
 + mov RX_HDR_BASE + (10 * RX_HDR_LEN), SPR_RXE_RXHDR_OFFSET
 + calls L798
++ // skip if csi not copied
++ jne [SHM_CSI_COPIED], 1, skip+
 + mov RX_HDR_BASE + (11 * RX_HDR_LEN), SPR_RXE_RXHDR_OFFSET
 + calls L798
++ // skip if csi not copied
++ jne [SHM_CSI_COPIED], 1, skip+
 + mov RX_HDR_BASE + (12 * RX_HDR_LEN), SPR_RXE_RXHDR_OFFSET
 + calls L798
++ // skip if csi not copied
++ jne [SHM_CSI_COPIED], 1, skip+
 + mov RX_HDR_BASE + (13 * RX_HDR_LEN), SPR_RXE_RXHDR_OFFSET
 + calls L798
++ // skip if csi not copied
++ jne [SHM_CSI_COPIED], 1, skip+
 + mov RX_HDR_BASE + (14 * RX_HDR_LEN), SPR_RXE_RXHDR_OFFSET
 + calls L798
++ // skip if csi not copied
++ jne [SHM_CSI_COPIED], 1, skip+
 + mov RX_HDR_BASE + (15 * RX_HDR_LEN), SPR_RXE_RXHDR_OFFSET
 + calls L798
++ // skip if csi not copied
++ jne [SHM_CSI_COPIED], 1, skip+
 + mov RX_HDR_BASE + (16 * RX_HDR_LEN), SPR_RXE_RXHDR_OFFSET
 + calls L798
++ // skip if csi not copied
++ jne [SHM_CSI_COPIED], 1, skip+
 + mov RX_HDR_BASE + (17 * RX_HDR_LEN), SPR_RXE_RXHDR_OFFSET
-@@ -3531,0 +3836 @@
+  calls L798
 +skip:
-@@ -4474,2 +4779 @@
+  jnzx 0, 12, SPR_DAGG_STAT, 0x0, L631
+  orx 5, 0, 0x22, SPR_RXE_FIFOCTL1, SPR_RXE_FIFOCTL1
+  orx 0, 2, 0x1, [RX_HDR_RxStatus1], [RX_HDR_RxStatus1]
+@@ -4471,8 +4751,9 @@
+  jmp L709
+ L798:
+  orx 1, 0, r23, [RX_HDR_PhyRxStatus_0], [RX_HDR_PhyRxStatus_0]
 - mov 0x840, SPR_RXE_RXHDR_OFFSET
 - mov 0xE, SPR_RXE_RXHDR_LEN
++ // mov 0x840, SPR_RXE_RXHDR_OFFSET
++ // mov 0xE, SPR_RXE_RXHDR_LEN
 + mov RX_HDR_LEN, SPR_RXE_RXHDR_LEN
+  orx 0, 0, 0x1, SPR_RXE_FIFOCTL1, SPR_RXE_FIFOCTL1
+  jnzx 0, 12, SPR_DAGG_STAT, 0x0, L799
+  mov 0x7, SPR_DAGG_CTL2
