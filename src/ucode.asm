@@ -2908,9 +2908,9 @@ spin_rx_end:
  jne [6,off1], SPARE1, skip+
  mov [CMP_DST_MAC_2], SPARE1
  jne [7,off1], SPARE1, skip+
- add [COUNTER], 1, [COUNTER]
- and [COUNTER], 0x3, [COUNTER]
- jne [COUNTER], 0, skip+
+ //add [COUNTER], 1, [COUNTER]
+ //and [COUNTER], 0x3, [COUNTER]
+ //jne [COUNTER], 0, skip+
  mov 1, r55
  or [5,off1], 0x0, [CMP_DST_MAC_SAVE_0]
  or [6,off1], 0x0, [CMP_DST_MAC_SAVE_1]

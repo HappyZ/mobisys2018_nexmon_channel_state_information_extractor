@@ -149,9 +149,15 @@ create_new_csi_frame(struct wl_info *wl, struct sk_buff *p, struct wlc_d11rxhdr 
 
     missing_csi_frames = wlc_rxhdr->rxhdr.NexmonExt;
 
+    // before create, first free the buffer no matter what
+    pkt_buf_free_skb(osh, p_csi, 0);
     // create new csi frame
     p_csi = pkt_buf_get_skb(osh, sizeof(struct csi_udp_frame) + missing_csi_frames * (RX_HDR_LEN * 2));
-    printf("p_csi = %X, missing_frame = %d\n", p_csi, missing_csi_frames);
+
+    if (!p_csi) {
+        printf("failed to allocate new %d-byte packet\n", sizeof(struct csi_udp_frame) + missing_csi_frames * (RX_HDR_LEN * 2));
+        return;
+    }
     inserted_csi_values = 0;
 
     struct csi_udp_frame *udpfrm = (struct csi_udp_frame *) p_csi->data;
@@ -236,8 +242,8 @@ process_frame_hook(struct sk_buff *p, struct wlc_d11rxhdr *wlc_rxhdr, struct wlc
                 printf("xmit\n");
                 wl->dev->chained->funcs->xmit(wl->dev, wl->dev->chained, p_csi);
                 printf("sent\n");
+                pkt_buf_free_skb(osh, p_csi, 0);
                 p_csi = 0;
-                //pkt_buf_free_skb(osh, p_csi, 0);
                 //printf("cleaning p_csi done\n");
                 //p_csi = 0;
             }
@@ -262,7 +268,7 @@ process_frame_hook(struct sk_buff *p, struct wlc_d11rxhdr *wlc_rxhdr, struct wlc
     } else if (p_csi != 0) {
         printf("missing csi, re-initializing p_csi\n");
         pkt_buf_free_skb(osh, p_csi, 0);
-        //p_csi = 0;
+        p_csi = 0;
     }
     // only continue processing this frame, if it is not a csi frame
     // printf("start non-csi frame\n");
